@@ -2,45 +2,19 @@ Parameters:
   KeyName:
     Description: SSH key pair to use for instance login
     Type: AWS::EC2::KeyPair::KeyName
+  InstanceTypeParameter:
+    Type: String
+    Default: t2.medium
+    AllowedValues:
+      - t2.medium
+      - m1.small
+      - m1.large
+    Description: Enter t2.micro, m1.small, or m1.large. Default is t2.micro.
 
 Mappings:
   Region:
     us-east-1:
-      HostAmi: ami-0beafb294c86717a8
-    us-east-2:
-      HostAmi: ami-0f4665edc97a93bea
-    us-west-1:
-      HostAmi: ami-0a1ef8665fe122a96
-    us-west-2:
-      HostAmi: ami-041fcb43d4730cf32
-    ap-east-1:
-      HostAmi: ami-eb36759a
-    ap-south-1:
-      HostAmi: ami-0571d68822206714c
-    ap-northeast-1:
-      HostAmi: ami-0d1e3062992b86514
-    ap-northeast-2:
-      HostAmi: ami-07a28b8671656c8c1
-    ap-southeast-1:
-      HostAmi: ami-00c3854c1706a382f
-    ap-southeast-2:
-      HostAmi: ami-09ba19d0563c3d553
-    ca-central-1:
-      HostAmi: ami-0a7c38a2574890e5c
-    eu-central-1:
-      HostAmi: ami-05d403b512bf100eb
-    eu-west-1:
-      HostAmi: ami-06cd7f9c4486344a5
-    eu-west-2:
-      HostAmi: ami-01ac84be28584498d
-    eu-west-3:
-      HostAmi: ami-0a682c61cac068f2f
-    eu-north-1:
-      HostAmi: ami-0dd62557e4298551a
-    me-south-1:
-      HostAmi: ami-05d51aacd3c741e32
-    sa-east-1:
-      HostAmi: ami-0cd294bc0ed0be0e4
+      HostAmi: ami-04505e74c0741db8d
 
 Resources:
   VPC:
@@ -103,7 +77,8 @@ Resources:
     Type: AWS::EC2::Instance
     Properties:
       KeyName: !Ref KeyName
-      InstanceType: t2.medium
+      InstanceType: 
+        Ref: InstanceTypeParameter
       ImageId: !FindInMap [Region, !Ref "AWS::Region", HostAmi]
       IamInstanceProfile: !Ref InstanceProfile
       SubnetId: !Ref PublicSubnet
@@ -115,21 +90,31 @@ Resources:
       UserData:
         Fn::Base64: !Sub |
           #!/bin/bash -xe
-          sudo yum update -y
-          sudo yum install -y libcurl-devel openssl-devel libxml2-devel python3
-          sudo amazon-linux-extras install -y R4
-          sudo pip3 install pandas sagemaker boto3
-          sudo R -e "install.packages(c('reticulate', 'readr', 'curl', 'ggplot2', 'dplyr', 'stringr'), repos = 'http://cran.rstudio.com')"
-          sudo adduser rstudio
-          sudo sh -c "echo rstudio | passwd rstudio --stdin"
-          wget https://download2.rstudio.org/server/centos6/x86_64/rstudio-server-rhel-1.3.1093-x86_64.rpm
-          sudo yum install -y rstudio-server-rhel-1.3.1093-x86_64.rpm
-          sudo -u rstudio mkdir /home/rstudio/.aws
-          region=`curl http://169.254.169.254/latest/dynamic/instance-identity/document|grep region|awk -F\" '{print $4}'`
-          sudo -u rstudio echo "Sys.setenv(RETICULATE_PYTHON = '/usr/bin/python3')" > /home/rstudio/.Rprofile
-          sudo -u rstudio echo "[default]" > /home/rstudio/.aws/config
-          sudo -u rstudio echo "region =" $region >> /home/rstudio/.aws/config
-          sudo rstudio-server restart
+          sudo apt-get update -y
+          sudo apt-get install -y libcurl-devel openssl-devel libxml2-devel python3
+          sudo apt-get install docker.io -y
+          sudo docker pull rocker/rstudio:4.2
+
+
+  CPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      ActionsEnabled: true
+      AlarmActions:
+        - arn:aws:swf:us-east-1:068454867054:action/actions/AWS_EC2.InstanceId.Stop/1.0
+      OKActions: []
+      InsufficientDataActions: []
+      MetricName: CPUUtilization
+      Namespace: AWS/EC2
+      Statistic: Average
+      Dimensions:
+          - Name: InstanceId
+            Value: !Ref Instance
+      Period: 3600
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Threshold: 10
+      ComparisonOperator: LessThanOrEqualToThreshold
 
   PublicSubnetSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -142,6 +127,10 @@ Resources:
           FromPort: '22'
           IpProtocol: tcp
           ToPort: '22'
+        - CidrIp: 0.0.0.0/0
+          FromPort: '8787'
+          IpProtocol: tcp
+          ToPort: '8787'
 
   EC2Role:
     Type: AWS::IAM::Role
